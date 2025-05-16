@@ -13,7 +13,7 @@ from lxml import etree
 sdmx_url = (
     "https://esploradati.istat.it/SDMXWS/rest/data/"
     "IT1,111_111_DF_DCSC_PERM_RAP1_1,1.0/all/ALL/"
-    "?detail=full&startPeriod=2023-09-01&endPeriod=2024-12-31"
+    "?detail=full&startPeriod=2019-01-01&endPeriod=2024-12-31"
     "&dimensionAtObservation=TIME_PERIOD"
 )
 # Make the HTTP GET request to the ISTAT SDMX API
@@ -42,10 +42,14 @@ df = pd.DataFrame(data, columns=["Quarter", "Dwellings"]).sort_values("Quarter")
 # === Step 3: Feature Engineering ===
 # Convert 'Quarter' to datetime format
 # Map quarters to starting months
+
+# === Step 3: Filter only valid quarterly entries like '2020-Q2' ===
+df = df[df["Quarter"].str.match(r"^\d{4}-Q[1-4]$")]
+
 quarter_to_month = {"Q1": "01", "Q2": "04", "Q3": "07", "Q4": "10"}
 df["Quarter"] = pd.to_datetime(
-    df["Quarter"].str.replace(r"(Q[1-4])", lambda m: quarter_to_month[m.group(1)], regex=True),
-    format="%Y-%m"
+    df["Quarter"].str.replace(r"(Q[1-4])", lambda m: quarter_to_month[m.group(1)], regex=True) + "-01",
+    format="%Y-%m-%d"
 )
 
 # Add lag features and indicators
@@ -57,13 +61,11 @@ df["is_growth_quarter"] = (df["permits_change"] > 0).astype(int) # Binary growth
 
 # === Step 4: Convert to Monthly Format (for time series alignment) ===
 # Generate monthly date range covering the same time span
-monthly = pd.DataFrame({"Month": pd.date_range(df["Quarter"].min(), df["Quarter"].max() + pd.offsets.QuarterEnd(0), freq="MS")})
+monthly = pd.date_range(df["Quarter"].min(), df["Quarter"].max() + pd.offsets.QuarterEnd(0), freq="MS")
+monthly_df = pd.DataFrame({"Month": monthly})
+monthly_df["Quarter"] = monthly_df["Month"].dt.to_period("Q").dt.start_time
 
-# Map each month to its corresponding quarter's start date
-monthly["Quarter"] = monthly["Month"].dt.to_period("Q").dt.start_time
-
-# Merge quarterly features into monthly dataframe and forward-fill
-monthly = monthly.merge(df, on="Quarter", how="left").drop(columns=["Quarter"])
+monthly = monthly_df.merge(df, on="Quarter", how="left").drop(columns="Quarter")
 monthly = monthly.ffill()
 
 # === Step 5: Save Final Dataset ===
